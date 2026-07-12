@@ -2,7 +2,6 @@ import { supabase, ensureSupabaseSession } from "./supabase";
 
 type LocalQuestion = { id: string; text: string; capture?: "rating" | "text" | "none"; validation?: "functionality" | "copy" };
 type LocalSection = { id: string; label: string; tag: string; context: string; task: string; capture?: "rating" | "text" | "none"; questions: LocalQuestion[] };
-type LocalParticipant = { id: string; nombre: string; edad: string; fecha: string; sesion: string; checks: Record<string, boolean>; respuestas: Record<string, string>; ratings: Record<string, number>; savedAt?: string };
 
 const STUDY_KEY = "ux-research-supabase-study";
 const MAP_KEY = "ux-research-supabase-map";
