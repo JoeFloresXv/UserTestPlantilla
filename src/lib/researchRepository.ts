@@ -86,7 +86,6 @@ export async function syncStudyTemplate(sections: LocalSection[], meta?: StudyMe
 
   const sectionIds: Record<string, string> = {};
   const questionIds: Record<string, string> = {};
-  // Posiciones temporales evitan choques de la restricción única al reordenar.
   for (let index = 0; index < sections.length; index += 1) {
     const section = sections[index];
     const remoteSectionId = map.sections[section.id] || crypto.randomUUID();

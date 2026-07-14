@@ -2,25 +2,43 @@
 
 Proyecto conectado: `BPD User Tests` (`mgyobszphvqjfjokwtav`).
 
-## Activación necesaria
-
-La aplicación usa sesiones anónimas persistentes. Activa **Allow anonymous sign-ins** en:
-
-https://supabase.com/dashboard/project/mgyobszphvqjfjokwtav/auth/providers
-
-Después, recarga la aplicación. El indicador superior debe pasar de **No sincronizado** a **Guardado en Supabase** al guardar una plantilla o entrevista.
-
 ## Publicar desde Figma Make
 
 1. Abre **Make settings → Integrations → Supabase**.
 2. Conecta el proyecto existente **BPD User Tests**.
-3. Publica o actualiza el sitio.
-4. Crea una entrevista de prueba y confirma en Supabase que aparezcan el estudio, sus secciones, preguntas, participante, respuestas, notas y valoraciones.
+3. Las variables `VITE_SUPABASE_URL` y `VITE_SUPABASE_PUBLISHABLE_KEY` se inyectan automáticamente.
+4. Publica la app. Si los valores de entorno no están disponibles en el build, el código usa los valores de respaldo que ya están embebidos en `src/lib/supabase.ts`.
 
-La URL y la clave **publicable** del proyecto forman parte del cliente como respaldo para el build de Figma Make. Esto es seguro únicamente porque todas las tablas tienen RLS y las operaciones exigen una sesión autenticada. Nunca agregues una `service_role` key ni una secret key al código.
+## Habilitar Anonymous Sign-Ins
 
-## Alcance de la sesión anónima
+La aplicación usa sesiones anónimas persistentes para que cada investigador pueda guardar sus estudios sin exponer las tablas públicamente. Antes de probar el guardado remoto, habilita **Anonymous Sign-Ins** en:
 
-Los datos se recuperan en el mismo navegador mientras exista su sesión. Si se borran los datos del navegador o se abre la app en otro dispositivo se crea otra identidad y no se verán los estudios anteriores. Para acceso compartido entre investigadores o recuperación desde varios dispositivos, el siguiente paso es incorporar inicio de sesión por correo.
+https://supabase.com/dashboard/project/mgyobszphvqjfjokwtav/auth/providers
 
-La aplicación conserva además un respaldo local de participantes, ficha y estructura de la plantilla cuando Supabase no está disponible.
+Después de habilitarlo, pulsa **"Guardar sesión"** en la app. El indicador superior debe cambiar de "Modo local" a "Sincronizado".
+
+## Tablas requeridas
+
+La aplicación necesita las siguientes tablas con RLS activo:
+
+| Tabla | Propósito |
+|---|---|
+| `studies` | Plantillas de estudio (secciones y preguntas) |
+| `study_sections` | Secciones de una plantilla |
+| `study_questions` | Preguntas por sección |
+| `participants` | Participantes por estudio |
+| `participant_answers` | Respuestas por pregunta y participante |
+| `participant_ratings` | Valoraciones (1–5) por sección/pregunta |
+| `participant_section_notes` | Notas de sección por participante |
+
+## Estudios independientes
+
+La app permite crear plantillas independientes (`createResearchStudy`) y listar todas las plantillas del usuario (`listResearchStudies`). El estudio activo se guarda en `localStorage` bajo la clave `ux-research-supabase-study`.
+
+Para cambiar de estudio activo sin perder datos, usa `activateResearchStudy(studyId)`. Para reiniciar el puntero (próxima sincronización crea un estudio nuevo), usa `resetResearchSync()`.
+
+## Notas
+
+- La clave publicable (`sb_publishable_...`) está diseñada para ejecutarse en el navegador. RLS protege los datos — la `SERVICE_ROLE_KEY` nunca debe aparecer en el frontend.
+- La aplicación mantiene un respaldo local mientras Supabase no esté disponible.
+- Los mapas de IDs locales→remotos se guardan por estudio en `ux-research-supabase-map:${studyId}` para soportar múltiples estudios en el mismo navegador.
