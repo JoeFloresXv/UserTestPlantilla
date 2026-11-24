@@ -1,9 +1,10 @@
+import type { Section, StudyMeta as FullMeta, Outcome, Rating } from "../app/studyModel";
 import { ensureSupabaseSession, supabase } from "./supabase";
 
 type CaptureMode = "rating" | "scale" | "text" | "none";
 type LocalQuestion = { id: string; text: string; capture?: CaptureMode; validation?: "functionality" | "copy" };
-type LocalSection = { id: string; label: string; tag: string; context: string; task: string; capture?: CaptureMode; questions: LocalQuestion[] };
-type StudyMeta = { name?: string; description?: string; creatorName?: string; teamName?: string; flowName?: string };
+type LocalSection = { id: string; label: string; tag: string; context: string; task: string; capture?: CaptureMode; questions: LocalQuestion[] } & Pick<Section,"criterion"|"screen"|"enabled"|"optional">;
+type StudyMeta = { name?: string; description?: string; creatorName?: string; teamName?: string; flowName?: string; method?: FullMeta["method"] };
 
 export type StudySummary = {
   id: string;
@@ -59,6 +60,7 @@ const studyPayload = (meta?: StudyMeta) => ({
   creator_name: meta?.creatorName || "",
   team_name: meta?.teamName || "",
   flow_name: meta?.flowName || "",
+  ...(meta?.method ? { methodology: meta.method } : {}),
   updated_at: new Date().toISOString(),
 });
 
@@ -89,7 +91,10 @@ export async function syncStudyTemplate(sections: LocalSection[], meta?: StudyMe
   for (let index = 0; index < sections.length; index += 1) {
     const section = sections[index];
     const remoteSectionId = map.sections[section.id] || crypto.randomUUID();
-    const { error } = await supabase.from("study_sections").upsert({ id: remoteSectionId, study_id: studyId, position: 10_000 + index, label: section.label, tag: section.tag, context: section.context, task: section.task, capture_mode: section.capture || (section.tag === "General" ? "none" : "rating") });
+    const { error } = await supabase.from("study_sections").upsert({ id: remoteSectionId, study_id: studyId, position: 10_000 + index, label: section.label, tag: section.tag, context: section.context, task: section.task,
+      ...(section.screen || section.criterion || section.optional || section.enabled !== undefined ? {
+        task_settings: { screen: section.screen, criterion: section.criterion, optional: section.optional, enabled: section.enabled }
+      } : {}), capture_mode: section.capture || (section.tag === "General" ? "none" : "rating") });
     if (error) return { studyId, sectionIds, questionIds, error };
     map.sections[section.id] = remoteSectionId;
     sectionIds[section.id] = remoteSectionId;
@@ -184,7 +189,7 @@ export async function listResearchStudies() {
   return { studies, error: null };
 }
 
-export async function saveParticipantToSupabase(input: { sections: LocalSection[]; meta?: StudyMeta; participantNumber: number; localId: string; nombre: string; edad: string; fecha: string; sesion: string; checks: Record<string, boolean>; respuestas: Record<string, string>; ratings: Record<string, number> }) {
+export async function saveParticipantToSupabase(input: { sections: LocalSection[]; meta?: StudyMeta; participantNumber: number; localId: string; outcomes?: Record<string,Outcome>; ease?: Record<string,Rating>; nombre: string; edad: string; fecha: string; sesion: string; checks: Record<string, boolean>; respuestas: Record<string, string>; ratings: Record<string, number> }) {
   const template = await syncStudyTemplate(input.sections, input.meta);
   if (template.error || !template.studyId) return template.error || new Error("No se pudo sincronizar la plantilla");
   const map = readMap();
@@ -204,7 +209,8 @@ export async function saveParticipantToSupabase(input: { sections: LocalSection[
     const { error } = await supabase!.from("participant_answers").upsert(answerRows, { onConflict: "participant_id,question_id" });
     if (error) return error;
   }
-  const sectionNoteRows = input.sections.map((section) => ({ participant_id: remoteParticipantId, section_id: template.sectionIds[section.id], note: input.respuestas[`${section.id}_notas`] || "", updated_at: new Date().toISOString() }));
+  const sectionNoteRows = input.sections.map((section) => ({ participant_id: remoteParticipantId, section_id: template.sectionIds[section.id], note: input.respuestas[`${section.id}_notas`] || "",
+    ...(input.outcomes?.[section.id] || input.ease?.[section.id] ? { outcome: input.outcomes?.[section.id] || null, ease: input.ease?.[section.id] || null } : {}), updated_at: new Date().toISOString() }));
   if (sectionNoteRows.length) {
     const { error } = await supabase!.from("participant_section_notes").upsert(sectionNoteRows, { onConflict: "participant_id,section_id" });
     if (error) return error;
@@ -233,39 +239,43 @@ export async function loadResearchFromSupabase(requestedStudyId?: string) {
   const savedStudyId = requestedStudyId || localStorage.getItem(STUDY_KEY);
   let study: any = null;
   if (savedStudyId) {
-    const { data, error } = await supabase.from("studies").select("id,name,description,creator_name,team_name,flow_name,created_at").eq("id", savedStudyId).maybeSingle();
+    const { data, error } = await supabase.from("studies").select("*").eq("id", savedStudyId).maybeSingle();
     if (error) return { ...emptyResult, error };
     study = data;
   }
   if (!study) {
-    const { data, error } = await supabase.from("studies").select("id,name,description,creator_name,team_name,flow_name,created_at").order("updated_at", { ascending: false }).limit(1).maybeSingle();
+    const { data, error } = await supabase.from("studies").select("*").order("updated_at", { ascending: false }).limit(1).maybeSingle();
     if (error) return { ...emptyResult, error };
     study = data;
   }
   if (!study) { resetResearchSync(); return { ...emptyResult, error: null }; }
   localStorage.setItem(STUDY_KEY, study.id);
   const [{ data: remoteSections, error: sectionError }, { data: remoteParticipants, error: participantError }] = await Promise.all([
-    supabase.from("study_sections").select("id,label,tag,context,task,capture_mode,position,study_questions(id,text,capture_mode,validation_type,position)").eq("study_id", study.id).order("position"),
+    supabase.from("study_sections").select("*,study_questions(id,text,capture_mode,validation_type,position)").eq("study_id", study.id).order("position"),
     supabase.from("participants").select("id,participant_number,name,age,session_code,session_date,demographics,updated_at").eq("study_id", study.id).order("participant_number"),
   ]);
   if (sectionError || participantError) return { ...emptyResult, error: sectionError || participantError };
-  const sections = (remoteSections || []).map((section: any) => ({ id: section.id, label: section.label, tag: section.tag, context: section.context, task: section.task, capture: section.capture_mode, questions: (section.study_questions || []).sort((a: any, b: any) => a.position - b.position).map((question: any) => ({ id: question.id, text: question.text, capture: question.capture_mode, validation: question.validation_type || "functionality" })) }));
+  const sections = (remoteSections || []).map((section: any) => ({ ...section.task_settings, id: section.id, label: section.label, tag: section.tag, context: section.context, task: section.task, capture: section.capture_mode, questions: (section.study_questions || []).sort((a: any, b: any) => a.position - b.position).map((question: any) => ({ id: question.id, text: question.text, capture: question.capture_mode, validation: question.validation_type || "functionality" })) }));
   const participantIds = (remoteParticipants || []).map((participant: any) => participant.id);
   const [answerResult, ratingResult, sectionNoteResult] = participantIds.length ? await Promise.all([
     supabase.from("participant_answers").select("participant_id,question_id,answer,interviewer_note").in("participant_id", participantIds),
     supabase.from("participant_ratings").select("participant_id,target_type,target_id,rating").in("participant_id", participantIds),
-    supabase.from("participant_section_notes").select("participant_id,section_id,note").in("participant_id", participantIds),
+    supabase.from("participant_section_notes").select("*").in("participant_id", participantIds),
   ]) : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
   const relatedError = answerResult.error || ratingResult.error || sectionNoteResult.error;
   if (relatedError) return { ...emptyResult, error: relatedError };
   const participants = (remoteParticipants || []).map((participant: any) => {
     const respuestas: Record<string, string> = {};
+    const outcomes: Record<string, Outcome> = {};
+    const ease: Record<string, Rating> = {};
     (answerResult.data || []).filter((answer: any) => answer.participant_id === participant.id).forEach((answer: any) => { respuestas[answer.question_id] = answer.answer; if (answer.interviewer_note) respuestas[`${answer.question_id}_registro`] = answer.interviewer_note; });
-    (sectionNoteResult.data || []).filter((note: any) => note.participant_id === participant.id).forEach((note: any) => { respuestas[`${note.section_id}_notas`] = note.note; });
+    (sectionNoteResult.data || []).filter((note: any) => note.participant_id === participant.id).forEach((note: any) => { respuestas[`${note.section_id}_notas`] = note.note;
+      if (note.outcome) outcomes[note.section_id] = note.outcome;
+      if (note.ease) ease[note.section_id] = note.ease; });
     const participantRatings: Record<string, number> = {};
     (ratingResult.data || []).filter((rating: any) => rating.participant_id === participant.id).forEach((rating: any) => { participantRatings[rating.target_id] = rating.rating; });
-    return { id: participant.id, nombre: participant.name, edad: participant.age, fecha: participant.session_date || "", sesion: participant.session_code, checks: participant.demographics || {}, respuestas, ratings: participantRatings, savedAt: participant.updated_at };
+    return { outcomes, ease, id: participant.id, nombre: participant.name, edad: participant.age, fecha: participant.session_date || "", sesion: participant.session_code, checks: participant.demographics || {}, respuestas, ratings: participantRatings, savedAt: participant.updated_at };
   });
   writeMap({ studyId: study.id, sections: Object.fromEntries(sections.map((section: any) => [section.id, section.id])), questions: Object.fromEntries(sections.flatMap((section: any) => section.questions.map((question: any) => [question.id, question.id]))), participants: Object.fromEntries(participants.map((participant: any) => [participant.id, participant.id])) });
-  return { studyId: study.id, sections, participants, meta: { name: study.name, description: study.description, creatorName: study.creator_name, teamName: study.team_name, flowName: study.flow_name }, error: null };
+  return { studyId: study.id, sections, participants, meta: { method: study.methodology || undefined, name: study.name, description: study.description, creatorName: study.creator_name, teamName: study.team_name, flowName: study.flow_name }, error: null };
 }

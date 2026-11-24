@@ -60,9 +60,21 @@ const approval: Scenario = {
   prompts: [note("En cada caso, ¿qué ocurrió y qué le dirías a quien espera el dinero?")],
 };
 
+const criteria: Record<string,string> = {
+  "Beneficiario registrado":"Asocia el monto del modal con el destinatario y lo identifica al volver.",
+  "Envío expreso":"Verifica la identidad y distingue preparar el pago de ejecutarlo.",
+  "Pago múltiple y comprobante":"Encuentra la referencia del segundo pago en el comprobante múltiple.",
+  "Vía de pago":"Elige la vía y explica cuándo espera que llegue el dinero.",
+  "Importe y comisión":"Distingue el importe recibido del débito total.",
+  "Corrección de destinatario":"Detecta la diferencia de nombre y corrige el dato.",
+  "Cambio de un pago del lote":"Retira solo el pago indicado y verifica el total restante.",
+  "Solicitud sometida (opcional)":"Distingue la solicitud pendiente de un pago completado."
+};
 export function createTransferSections(includeApproval: boolean) {
-  return [...tasks, ...probes, ...(includeApproval ? [approval] : [])].map(({ label, context, task, prompts }) => ({
-    id: crypto.randomUUID(), label, context, task, tag: "Escenario" as const, capture: "none" as const,
+  return [...tasks, ...probes, approval].map(({ label, context, task, prompts }) => ({
+    id: crypto.randomUUID(), label, context, task,
+    ...(label === approval.label ? { optional: true, enabled: includeApproval } : {}),
+    criterion: criteria[label], tag: "Escenario" as const, capture: "none" as const,
     questions: prompts.map(prompt => ({ id: crypto.randomUUID(), ...prompt })),
   }));
 }
